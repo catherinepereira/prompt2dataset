@@ -1,5 +1,8 @@
 # prompt2dataset
 
+<img width="600" alt="prompt2dataset-cli" src="https://github.com/user-attachments/assets/4b715060-04c7-4335-b6b9-594743603cb2" />
+
+
 Build labeled image datasets from a plain-English prompt.
 
 ```text
