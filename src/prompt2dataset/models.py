@@ -14,11 +14,17 @@ class ReviewStatus(str, Enum):
     invalid = "invalid"
 
 
+class MediaType(str, Enum):
+    image = "image"
+    video = "video"
+
+
 class DatasetItem(BaseModel):
     item_id: str
     label: str
     source_url: str
     local_path: str
+    media_type: MediaType = MediaType.image
     review_status: ReviewStatus = ReviewStatus.pending
     meta: dict[str, Any] = Field(default_factory=dict)
     fetched_at: float = Field(default_factory=time.time)
@@ -31,6 +37,7 @@ class DatasetItem(BaseModel):
 class Dataset(BaseModel):
     dataset_id: str
     prompt: str
+    media_type: MediaType = MediaType.image
     subjects: list[str]
     sources: list[str]
     items: list[DatasetItem] = Field(default_factory=list)

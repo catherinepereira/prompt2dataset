@@ -3,15 +3,15 @@
 <img width="600" alt="prompt2dataset-cli" src="https://github.com/user-attachments/assets/4b715060-04c7-4335-b6b9-594743603cb2" />
 
 
-Build labeled image datasets from a plain-English prompt.
+Build labeled image and video datasets from a plain-English prompt.
 
 ```text
 $ cd my-dataset
 $ p2d add
-What image dataset do you want to build? > bird species native to the Pacific Northwest
+What dataset do you want to build? > bird species native to the Pacific Northwest
 ```
 
-prompt2dataset resolves your description into subjects via Claude, fetches images
+prompt2dataset resolves your description into subjects via Claude, fetches media
 from one or more sources, deduplicates, downloads, and writes a manifest.
 
 ## Installation
@@ -45,9 +45,10 @@ All commands operate on the current directory.
 
 ### `p2d add`
 
-Prompts for a dataset description, resolves subjects, and downloads images.
-Run it again in the same directory to fetch additional subjects without
-re-downloading what's already there.
+Prompts for a dataset description, asks whether you want images or video,
+resolves subjects, and downloads media. Run it again in the same directory to
+fetch additional subjects without re-downloading what's already there. The
+media type is fixed when the dataset is created.
 
 ```bash
 $ mkdir pacific-northwest-birds && cd pacific-northwest-birds
@@ -71,7 +72,7 @@ Print dataset statistics and the subject list.
 
 ### `p2d train`
 
-Fine-tune a pretrained image classifier on the dataset. Uses
+Image datasets only. Fine-tune a pretrained image classifier on the dataset. Uses
 [torch-lr-finder](https://github.com/davidtvs/pytorch-lr-finder) to find a good
 learning rate automatically, then trains for N epochs and exports a TorchScript model.
 
@@ -90,8 +91,10 @@ Options: `--epochs`, `--val-split`, `--img-size`, `--model` (mobilenet_v2, resne
 | **Wikimedia Commons** | Well-documented subjects with Wikipedia articles         |
 | **iNaturalist**       | Animals, plants, fungi - research-grade, taxonomy-tagged |
 | **Openverse**         | General subjects, scenes, cultural content               |
+| **Wikimedia Commons (video)** | Freely licensed video clips (video datasets)     |
 
-None require an API key. Sources are selected interactively when you run `p2d add`.
+None require an API key. Sources are selected interactively when you run
+`p2d add`, filtered to those that support the chosen media type.
 
 ## Output layout
 

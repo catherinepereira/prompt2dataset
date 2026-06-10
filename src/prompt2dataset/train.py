@@ -322,7 +322,7 @@ def train_cmd(epochs: int, val_split: float, img_size: int, model_name: str) -> 
             "  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126"
         )
 
-    from prompt2dataset.models import Dataset
+    from prompt2dataset.models import Dataset, MediaType
 
     dataset_root = Path.cwd()
     md = meta_dir(dataset_root)
@@ -331,6 +331,9 @@ def train_cmd(epochs: int, val_split: float, img_size: int, model_name: str) -> 
         raise click.ClickException("No manifest found. Run `p2d add` first.")
 
     ds = Dataset.model_validate_json(manifest.read_text(encoding="utf-8"))
+
+    if ds.media_type == MediaType.video:
+        raise click.ClickException("p2d train supports image datasets only.")
 
     if not ds.items:
         raise click.ClickException("No items in dataset. Run `p2d add` first.")

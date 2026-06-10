@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
 import os
 import re
+import socket
 import subprocess
 import sys
 import time
-import urllib.request
 from pathlib import Path
 from typing import Optional
 
 import click
+import httpx
 import questionary
 from dotenv import load_dotenv, set_key
 from rich.columns import Columns
@@ -25,7 +27,7 @@ from rich.table import Table
 load_dotenv()
 
 from prompt2dataset.train import train_cmd
-from prompt2dataset.models import Dataset, DatasetItem, ReviewStatus
+from prompt2dataset.models import Dataset, DatasetItem, MediaType, ReviewStatus
 from prompt2dataset.resolver import resolve_subjects
 from prompt2dataset.sources import REGISTRY, fetch_all
 from prompt2dataset.utils import meta_dir
@@ -118,26 +120,90 @@ def _open_folder(path: Path) -> None:
         pass
 
 
-def _extension_for(url: str) -> str:
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+_VIDEO_EXTS = {".mp4", ".webm", ".ogv", ".mov"}
+
+
+def _extension_for(url: str, media_type: MediaType = MediaType.image) -> str:
     ext = Path(url.split("?")[0].rstrip("/")).suffix.lower()
-    return ext if ext in {".jpg", ".jpeg", ".png", ".gif", ".webp"} else ".jpg"
+    if media_type == MediaType.video:
+        return ext if ext in _VIDEO_EXTS else ".webm"
+    return ext if ext in _IMAGE_EXTS else ".jpg"
+
+
+# Sources return file URLs we then fetch. Cap the size so a hostile or oversized
+# response can't exhaust memory, and stream to disk rather than buffering the
+# whole body. Full-res video makes both limits load-bearing.
+MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024
+_DOWNLOAD_CHUNK = 1024 * 1024
+_MAX_REDIRECTS = 10
+
+
+def _host_is_public(host: str) -> bool:
+    """True if every address the host resolves to is a routable public IP.
+
+    A source URL, or a redirect from one, could point at localhost, a cloud
+    metadata endpoint, or an internal address. Resolving the name here also
+    catches public DNS names pointed at a private IP, which a literal-only
+    check would miss. A determined rebinding attacker can still return a
+    different IP at connect time, which is out of scope for this tool.
+    """
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return False
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            return False
+    return True
 
 
 def _download_file(url: str, dest: Path) -> bool:
     dest.parent.mkdir(parents=True, exist_ok=True)
     contact = os.environ.get("P2D_CONTACT", "unknown")
-    ua = f"prompt2dataset/0.1 ({contact}) urllib/3"
+    ua = f"prompt2dataset/0.1 ({contact}) httpx/0.27"
+    # Write to a temp path and rename on success, so a download cut short by a
+    # crash leaves a .part file, not a truncated file the next run treats as done.
+    part = dest.with_name(dest.name + ".part")
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": ua})
-        with urllib.request.urlopen(req, timeout=20) as resp, open(dest, "wb") as f:
-            f.write(resp.read())
-        return True
+        # Follow redirects by hand so each hop's host can be checked before we
+        # connect to it. httpx speaks only http(s), so file:// and ftp:// are
+        # already refused.
+        with httpx.Client(timeout=20) as client:
+            for _ in range(_MAX_REDIRECTS + 1):
+                if not _host_is_public(httpx.URL(url).host):
+                    log.warning("Refusing non-public host for %s", url)
+                    return False
+                with client.stream("GET", url, headers={"User-Agent": ua}) as resp:
+                    if resp.is_redirect:
+                        url = str(resp.next_request.url)
+                        continue
+                    resp.raise_for_status()
+                    length = resp.headers.get("Content-Length")
+                    if length and int(length) > MAX_DOWNLOAD_BYTES:
+                        log.warning("Skipping %s: %s bytes exceeds cap", url, length)
+                        return False
+                    written = 0
+                    with open(part, "wb") as f:
+                        for chunk in resp.iter_bytes(_DOWNLOAD_CHUNK):
+                            written += len(chunk)
+                            if written > MAX_DOWNLOAD_BYTES:
+                                log.warning("Aborting %s: exceeded %d byte cap", url, MAX_DOWNLOAD_BYTES)
+                                part.unlink(missing_ok=True)
+                                return False
+                            f.write(chunk)
+                    os.replace(part, dest)
+                    return True
+            log.warning("Too many redirects for %s", url)
+            return False
     except Exception as exc:
         log.warning("Download failed %s: %s", url, exc)
+        part.unlink(missing_ok=True)
         return False
 
 
-def _records_to_items(raw_results: dict) -> list[DatasetItem]:
+def _records_to_items(raw_results: dict, media_type: MediaType) -> list[DatasetItem]:
     items: list[DatasetItem] = []
     for subject, source_map in raw_results.items():
         label = _slug(subject)
@@ -147,12 +213,13 @@ def _records_to_items(raw_results: dict) -> list[DatasetItem]:
                 if not url:
                     continue
                 item_id = DatasetItem.make_id(url)
-                ext = _extension_for(url)
+                ext = _extension_for(url, media_type)
                 items.append(DatasetItem(
                     item_id=item_id,
                     label=label,
                     source_url=url,
                     local_path=str(Path(label) / f"{label}_{item_id}{ext}"),
+                    media_type=media_type,
                     meta={k: v for k, v in rec.items() if k != "url"},
                 ))
     return items
@@ -194,15 +261,28 @@ def _run_add(dataset_root: Path) -> Optional[Dataset]:
     if (meta_dir(dataset_root) / "manifest.json").exists():
         existing_ds = load_dataset(dataset_root)
         prompt = existing_ds.prompt
-        console.print(f"[dim]Prompt:[/] {prompt}\n")
+        media_type = existing_ds.media_type
+        console.print(f"[dim]Prompt:[/] {prompt}  [dim]({media_type.value})[/]\n")
     else:
         prompt = questionary.text(
-            "What image dataset do you want to build?",
+            "What dataset do you want to build?",
             style=STYLE,
         ).ask()
         if not prompt:
             return None
         prompt = prompt.strip()
+
+        media_choice = questionary.select(
+            "Image or video?",
+            choices=[
+                questionary.Choice("image", value=MediaType.image),
+                questionary.Choice("video", value=MediaType.video),
+            ],
+            style=STYLE,
+        ).ask()
+        if media_choice is None:
+            return None
+        media_type = media_choice
 
     cap_str = questionary.text(
         "Max subjects to use? (leave blank for all)",
@@ -214,15 +294,19 @@ def _run_add(dataset_root: Path) -> Optional[Dataset]:
         return None
     subject_cap = int(cap_str) if cap_str.strip() else None
 
+    available = {
+        name: a for name, a in REGISTRY.items() if media_type in a.media_types
+    }
+    default_source = "duckduckgo" if media_type == MediaType.image else "wikimedia_commons_video"
     chosen = questionary.checkbox(
         "Select one or more sources:",
         choices=[
             questionary.Choice(
                 f"{name}  -  {a.description[:65]}...",
                 value=name,
-                checked=(name == "duckduckgo"),
+                checked=(name == default_source),
             )
-            for name, a in REGISTRY.items()
+            for name, a in available.items()
         ],
         style=STYLE,
     ).ask()
@@ -324,6 +408,7 @@ def _run_add(dataset_root: Path) -> Optional[Dataset]:
         ds = Dataset(
             dataset_id=dataset_root.name,
             prompt=prompt,
+            media_type=media_type,
             subjects=new_subjects,
             sources=source_list,
         )
@@ -347,7 +432,7 @@ def _run_add(dataset_root: Path) -> Optional[Dataset]:
         async def _fetch_with_progress() -> dict:
             results: dict = {}
             for subject in new_subjects:
-                partial = await fetch_all([subject], source_list, limit)
+                partial = await fetch_all([subject], source_list, limit, media_type)
                 results.update(partial)
                 progress.advance(task)
             return results
@@ -364,7 +449,7 @@ def _run_add(dataset_root: Path) -> Optional[Dataset]:
         save_dataset(ds, dataset_root)
         return ds
 
-    new_items = _records_to_items(raw_results)
+    new_items = _records_to_items(raw_results, media_type)
     added = ds.add_items(new_items)
     skipped = len(new_items) - added
     if skipped:
@@ -530,6 +615,7 @@ def info() -> None:
     table.add_column("Field", style="bold")
     table.add_column("Value")
     table.add_row("Prompt", ds.prompt)
+    table.add_row("Media type", ds.media_type.value)
     table.add_row("Sources", ", ".join(ds.sources))
     table.add_row("Subjects", str(len(ds.subjects)))
     table.add_row("Total images", str(stats["total"]))
