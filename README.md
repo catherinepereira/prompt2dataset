@@ -88,6 +88,7 @@ Options: `--epochs`, `--val-split`, `--img-size`, `--model` (mobilenet_v2, resne
 | Source                | Best for                                                 |
 |-----------------------|----------------------------------------------------------|
 | **DuckDuckGo**        | Broad or niche subjects, recent events, pop culture      |
+| **Bing**              | General web image search, high-volume results            |
 | **Wikimedia Commons** | Well-documented subjects with Wikipedia articles         |
 | **iNaturalist**       | Animals, plants, fungi - research-grade, taxonomy-tagged |
 | **Openverse**         | General subjects, scenes, cultural content               |
