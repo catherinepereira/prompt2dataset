@@ -247,6 +247,48 @@ async def _fetch_duckduckgo(subject: str, limit: int = 20) -> list[dict[str, Any
     return results
 
 
+async def _fetch_bing(subject: str, limit: int = 20) -> list[dict[str, Any]]:
+    # Bing's image results page embeds each result as JSON in an m="..." attribute
+    # on the result anchors; murl is the full image URL. Paginate with first=.
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    results: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        for first in range(0, limit * 2, 35):
+            if len(results) >= limit:
+                break
+            try:
+                resp = await client.get(
+                    "https://www.bing.com/images/async",
+                    params={"q": subject, "first": first, "count": 35, "mmasync": 1},
+                    headers=headers,
+                )
+                resp.raise_for_status()
+            except httpx.HTTPError as exc:
+                log.warning("Bing failed for %r: %s", subject, exc)
+                break
+
+            urls = re.findall(r'murl&quot;:&quot;(.*?)&quot;', resp.text)
+            if not urls:
+                break
+            for raw in urls:
+                url = raw.replace("\\u0026", "&").replace("\\/", "/")
+                if url in seen or not url.startswith("http"):
+                    continue
+                seen.add(url)
+                results.append({"source": "bing", "url": url})
+                if len(results) >= limit:
+                    break
+
+    return results
+
+
 REGISTRY: dict[str, SourceAdapter] = {
     "duckduckgo": SourceAdapter(
         name="duckduckgo",
@@ -254,6 +296,11 @@ REGISTRY: dict[str, SourceAdapter] = {
             "General web image search via DuckDuckGo."
         ),
         fetch=_fetch_duckduckgo,
+    ),
+    "bing": SourceAdapter(
+        name="bing",
+        description="General web image search via Bing.",
+        fetch=_fetch_bing,
     ),
     "inaturalist": SourceAdapter(
         name="inaturalist",
