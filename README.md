@@ -11,8 +11,8 @@ $ p2d add
 What dataset do you want to build? > bird species native to the Pacific Northwest
 ```
 
-prompt2dataset resolves your description into subjects via Claude, fetches media
-from one or more sources, deduplicates, downloads, and writes a manifest.
+prompt2dataset resolves your description into subjects via a local Qwen model,
+fetches media from one or more sources, deduplicates, downloads, and writes a manifest.
 
 ## Installation
 
@@ -30,13 +30,20 @@ pip install "prompt2dataset[train-cuda]"  # CUDA (installs matching torch/torchv
 
 ## Setup
 
-prompt2dataset needs an Anthropic API key. On first run it will prompt you and save the
-key to a local `.env` file. Or set it yourself:
+prompt2dataset resolves subjects with a local [Ollama](https://ollama.com) model.
+Install Ollama and pull the model:
+
+```bash
+ollama pull qwen2.5:3b-instruct
+```
+
+Optional environment variables (set in a local `.env` file):
 
 ```bash
 # .env
-ANTHROPIC_API_KEY=sk-ant-...
-P2D_CONTACT=you@example.com   # included in API request headers per Wikimedia's policy
+OLLAMA_HOST=http://localhost:11434   # where Ollama is running
+P2D_MODEL=qwen2.5:3b-instruct        # which model to resolve subjects with
+P2D_CONTACT=you@example.com          # included in source API request headers per Wikimedia's policy
 ```
 
 ## Usage
