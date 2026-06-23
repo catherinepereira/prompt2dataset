@@ -7,18 +7,12 @@ import logging
 import os
 import re
 
-import anthropic
+import httpx
 
 log = logging.getLogger(__name__)
 
-_CLIENT = None
-
-
-def _client() -> anthropic.Anthropic:
-    global _CLIENT
-    if _CLIENT is None:
-        _CLIENT = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-    return _CLIENT
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+DEFAULT_MODEL = os.environ.get("P2D_MODEL", "qwen2.5:3b-instruct")
 
 
 def _parse_json_array(raw: str) -> list:
@@ -47,13 +41,20 @@ Rules:
 """
 
 
-def resolve_subjects(prompt: str, model: str = "claude-sonnet-4-6") -> list[str]:
-    resp = _client().messages.create(
-        model=model,
-        max_tokens=8096,
-        temperature=0,
-        system=_SUBJECT_SYSTEM,
-        messages=[{"role": "user", "content": prompt}],
+def resolve_subjects(prompt: str, model: str = DEFAULT_MODEL) -> list[str]:
+    resp = httpx.post(
+        f"{OLLAMA_HOST}/api/chat",
+        json={
+            "model": model,
+            "stream": False,
+            "options": {"temperature": 0},
+            "messages": [
+                {"role": "system", "content": _SUBJECT_SYSTEM},
+                {"role": "user", "content": prompt},
+            ],
+        },
+        timeout=120,
     )
-    subjects = _parse_json_array(resp.content[0].text)
+    resp.raise_for_status()
+    subjects = _parse_json_array(resp.json()["message"]["content"])
     return [s.strip() for s in subjects if isinstance(s, str) and s.strip()]
