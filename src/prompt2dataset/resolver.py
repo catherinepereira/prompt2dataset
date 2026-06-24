@@ -37,7 +37,7 @@ Rules:
 - Return ONLY a JSON array of strings, no commentary or markdown
 - Each string must be a concrete, queryable name (scientific or common is fine)
 - Prefer specificity: "Turdus migratorius" or "American Robin" over just "robin"
-- Remove duplicates; keep ordering logical (taxonomic, alphabetical, etc.)
+- Remove duplicates. Keep ordering logical (taxonomic, alphabetical, etc.)
 """
 
 

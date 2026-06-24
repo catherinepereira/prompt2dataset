@@ -16,7 +16,7 @@ from typing import Optional
 import click
 import httpx
 import questionary
-from dotenv import load_dotenv, set_key
+from dotenv import load_dotenv
 from rich.columns import Columns
 from rich.console import Console
 from rich.panel import Panel
@@ -35,7 +35,6 @@ from prompt2dataset.utils import meta_dir
 console = Console()
 log = logging.getLogger(__name__)
 
-ENV_FILE = Path(".env")
 DOWNLOAD_RATE_LIMIT = 0.1
 
 STYLE = questionary.Style([
@@ -48,35 +47,6 @@ STYLE = questionary.Style([
     ("separator",   "fg:#6b7280"),
     ("instruction", "fg:#6b7280"),
 ])
-
-
-def _key_is_set() -> bool:
-    key = os.environ.get("ANTHROPIC_API_KEY", "")
-    return bool(key) and not key.startswith("sk-ant-...")
-
-
-def _ensure_api_key() -> None:
-    if _key_is_set():
-        return
-
-    console.print()
-    console.print(Panel(
-        "An Anthropic API key is required.\n"
-        "Get yours at [cyan]https://console.anthropic.com/[/]\n\n"
-        "The key will be saved to [dim].env[/] in this directory.",
-        title="[yellow]API key not found[/]",
-        border_style="yellow",
-    ))
-    console.print()
-
-    key = questionary.password("Paste your Anthropic API key:", style=STYLE).ask()
-    if not key or not key.strip():
-        raise click.ClickException("No API key provided.")
-
-    key = key.strip()
-    os.environ["ANTHROPIC_API_KEY"] = key
-    set_key(str(ENV_FILE), "ANTHROPIC_API_KEY", key)
-    console.print("[green]v[/] Key saved to .env\n")
 
 
 def load_dataset(dataset_root: Path) -> Dataset:
@@ -251,7 +221,17 @@ def _download_items(items: list[DatasetItem], dataset_root: Path) -> tuple[int, 
     return ok, failed
 
 
-def _run_add(dataset_root: Path) -> Optional[Dataset]:
+def _load_subjects_file(path: Path) -> list[str]:
+    """Read a subject list from a file: a JSON array, or one subject per line."""
+    text = path.read_text(encoding="utf-8").strip()
+    if text.startswith("["):
+        raw = json.loads(text)
+    else:
+        raw = text.splitlines()
+    return [s.strip() for s in raw if isinstance(s, str) and s.strip()]
+
+
+def _run_add(dataset_root: Path, subjects_file: Optional[Path] = None) -> Optional[Dataset]:
     console.print()
     console.print(Rule(f"[bold violet]prompt2dataset[/] [dim]{dataset_root.name}[/]"))
     console.print()
@@ -327,15 +307,22 @@ def _run_add(dataset_root: Path) -> Optional[Dataset]:
 
     console.print()
 
-    with console.status("[bold]Resolving subjects...[/]", spinner="dots"):
+    if subjects_file:
         try:
-            all_subjects = resolve_subjects(prompt)
+            all_subjects = _load_subjects_file(subjects_file)
         except Exception as exc:
-            console.print(f"[red]Subject resolution failed:[/] {exc}")
+            console.print(f"[red]Could not read subjects file:[/] {exc}")
             return None
+    else:
+        with console.status("[bold]Resolving subjects...[/]", spinner="dots"):
+            try:
+                all_subjects = resolve_subjects(prompt)
+            except Exception as exc:
+                console.print(f"[red]Subject resolution failed:[/] {exc}")
+                return None
 
     if not all_subjects:
-        console.print("[red]Claude returned an empty subject list.[/]")
+        console.print("[red]Empty subject list.[/]")
         return None
 
     if subject_cap and len(all_subjects) > subject_cap:
@@ -503,16 +490,22 @@ def cli(debug: bool) -> None:
 
 
 @cli.command()
-def add() -> None:
+@click.option(
+    "--subjects",
+    "subjects_file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Read subjects from a file (JSON array or one per line) instead of resolving the prompt.",
+)
+def add(subjects_file: Optional[Path]) -> None:
     """Populate the current directory with images.
 
     On first run: prompts for a dataset description, resolves subjects, and
     downloads images. On subsequent runs: reuses the saved prompt, skips
-    subjects already present, and fetches only new ones.
+    subjects already present, and fetches only new ones. Pass --subjects to
+    supply the subject list from a file and skip resolving the prompt.
     """
-    _ensure_api_key()
     dataset_root = Path.cwd()
-    ds = _run_add(dataset_root)
+    ds = _run_add(dataset_root, subjects_file)
     if ds:
         _print_summary(ds, dataset_root)
 

@@ -21,6 +21,18 @@ from prompt2dataset.models import MediaType
 
 log = logging.getLogger(__name__)
 
+HTTP_TIMEOUT = 30
+
+# Each source caps how many results it returns per request. These are the
+# per-page maximums the respective APIs accept. We never ask for more.
+INATURALIST_MAX_PER_PAGE = 200
+OPENVERSE_MAX_PAGE_SIZE = 20
+WIKIMEDIA_MAX_RESULTS = 50
+
+# Bing has no JSON API. Its async endpoint returns a fixed-size page of results.
+BING_PAGE_SIZE = 35
+
+
 def _user_agent() -> str:
     contact = os.environ.get("P2D_CONTACT", "unknown")
     return f"prompt2dataset/0.1 ({contact}) httpx/0.27"
@@ -41,11 +53,11 @@ async def _fetch_inaturalist(subject: str, limit: int = 20) -> list[dict[str, An
         "q": subject,
         "quality_grade": "research",
         "photos": "true",
-        "per_page": min(limit, 200),
+        "per_page": min(limit, INATURALIST_MAX_PER_PAGE),
         "order": "votes",
         "order_by": "votes",
     }
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
         try:
             resp = await client.get(
                 "https://api.inaturalist.org/v1/observations",
@@ -84,9 +96,9 @@ async def _fetch_openverse(subject: str, limit: int = 20) -> list[dict[str, Any]
     params = {
         "q": subject,
         "license_type": "commercial,modification",
-        "page_size": min(limit, 20),
+        "page_size": min(limit, OPENVERSE_MAX_PAGE_SIZE),
     }
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
         try:
             resp = await client.get("https://api.openverse.org/v1/images/", params=params)
             resp.raise_for_status()
@@ -130,7 +142,7 @@ async def _query_wikimedia_commons(subject: str, limit: int) -> list[dict[str, A
         "generator": "search",
         "gsrsearch": subject,
         "gsrnamespace": 6,
-        "gsrlimit": min(limit, 50),
+        "gsrlimit": min(limit, WIKIMEDIA_MAX_RESULTS),
         "prop": "imageinfo",
         # iiurlwidth asks Wikimedia for a scaled thumbnail rather than the full file,
         # per their guidance for API consumers to avoid 429s.
@@ -138,7 +150,7 @@ async def _query_wikimedia_commons(subject: str, limit: int) -> list[dict[str, A
         "iiurlwidth": 800,
         "format": "json",
     }
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
         try:
             resp = await client.get(
                 "https://commons.wikimedia.org/w/api.php",
@@ -205,7 +217,7 @@ async def _fetch_duckduckgo(subject: str, limit: int = 20) -> list[dict[str, Any
         "Accept": "application/json, text/javascript, */*; q=0.01",
         "Referer": "https://duckduckgo.com/",
     }
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=True) as client:
         try:
             init = await client.post(
                 "https://duckduckgo.com/",
@@ -249,7 +261,7 @@ async def _fetch_duckduckgo(subject: str, limit: int = 20) -> list[dict[str, Any
 
 async def _fetch_bing(subject: str, limit: int = 20) -> list[dict[str, Any]]:
     # Bing's image results page embeds each result as JSON in an m="..." attribute
-    # on the result anchors; murl is the full image URL. Paginate with first=.
+    # on the result anchors. murl is the full image URL. Paginate with first=.
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -259,14 +271,14 @@ async def _fetch_bing(subject: str, limit: int = 20) -> list[dict[str, Any]]:
     }
     results: list[dict[str, Any]] = []
     seen: set[str] = set()
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-        for first in range(0, limit * 2, 35):
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=True) as client:
+        for first in range(0, limit * 2, BING_PAGE_SIZE):
             if len(results) >= limit:
                 break
             try:
                 resp = await client.get(
                     "https://www.bing.com/images/async",
-                    params={"q": subject, "first": first, "count": 35, "mmasync": 1},
+                    params={"q": subject, "first": first, "count": BING_PAGE_SIZE, "mmasync": 1},
                     headers=headers,
                 )
                 resp.raise_for_status()

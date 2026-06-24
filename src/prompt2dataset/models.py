@@ -7,6 +7,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+# Length of the hex item id derived from a source URL. 12 hex chars = 48 bits,
+# enough to make collisions across a single dataset's URLs vanishingly unlikely.
+ID_LENGTH = 12
+
 
 class ReviewStatus(str, Enum):
     pending = "pending"
@@ -31,7 +35,7 @@ class DatasetItem(BaseModel):
 
     @classmethod
     def make_id(cls, source_url: str) -> str:
-        return hashlib.sha1(source_url.encode()).hexdigest()[:12]
+        return hashlib.sha1(source_url.encode()).hexdigest()[:ID_LENGTH]
 
 
 class Dataset(BaseModel):
