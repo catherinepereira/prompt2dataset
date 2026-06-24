@@ -27,7 +27,8 @@ from rich.table import Table
 load_dotenv()
 
 from prompt2dataset.train import train_cmd
-from prompt2dataset.models import Dataset, DatasetItem, MediaType, ReviewStatus
+from prompt2dataset.dedup import dedup_cmd, outliers_cmd
+from prompt2dataset.models import Dataset, DatasetItem, ReviewStatus
 from prompt2dataset.resolver import resolve_subjects
 from prompt2dataset.sources import REGISTRY, fetch_all
 from prompt2dataset.utils import meta_dir
@@ -91,19 +92,16 @@ def _open_folder(path: Path) -> None:
 
 
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
-_VIDEO_EXTS = {".mp4", ".webm", ".ogv", ".mov"}
 
 
-def _extension_for(url: str, media_type: MediaType = MediaType.image) -> str:
+def _extension_for(url: str) -> str:
     ext = Path(url.split("?")[0].rstrip("/")).suffix.lower()
-    if media_type == MediaType.video:
-        return ext if ext in _VIDEO_EXTS else ".webm"
     return ext if ext in _IMAGE_EXTS else ".jpg"
 
 
 # Sources return file URLs we then fetch. Cap the size so a hostile or oversized
 # response can't exhaust memory, and stream to disk rather than buffering the
-# whole body. Full-res video makes both limits load-bearing.
+# whole body.
 MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024
 _DOWNLOAD_CHUNK = 1024 * 1024
 _MAX_REDIRECTS = 10
@@ -173,7 +171,7 @@ def _download_file(url: str, dest: Path) -> bool:
         return False
 
 
-def _records_to_items(raw_results: dict, media_type: MediaType) -> list[DatasetItem]:
+def _records_to_items(raw_results: dict) -> list[DatasetItem]:
     items: list[DatasetItem] = []
     for subject, source_map in raw_results.items():
         label = _slug(subject)
@@ -183,13 +181,12 @@ def _records_to_items(raw_results: dict, media_type: MediaType) -> list[DatasetI
                 if not url:
                     continue
                 item_id = DatasetItem.make_id(url)
-                ext = _extension_for(url, media_type)
+                ext = _extension_for(url)
                 items.append(DatasetItem(
                     item_id=item_id,
                     label=label,
                     source_url=url,
                     local_path=str(Path(label) / f"{label}_{item_id}{ext}"),
-                    media_type=media_type,
                     meta={k: v for k, v in rec.items() if k != "url"},
                 ))
     return items
@@ -241,8 +238,7 @@ def _run_add(dataset_root: Path, subjects_file: Optional[Path] = None) -> Option
     if (meta_dir(dataset_root) / "manifest.json").exists():
         existing_ds = load_dataset(dataset_root)
         prompt = existing_ds.prompt
-        media_type = existing_ds.media_type
-        console.print(f"[dim]Prompt:[/] {prompt}  [dim]({media_type.value})[/]\n")
+        console.print(f"[dim]Prompt:[/] {prompt}\n")
     else:
         prompt = questionary.text(
             "What dataset do you want to build?",
@@ -251,18 +247,6 @@ def _run_add(dataset_root: Path, subjects_file: Optional[Path] = None) -> Option
         if not prompt:
             return None
         prompt = prompt.strip()
-
-        media_choice = questionary.select(
-            "Image or video?",
-            choices=[
-                questionary.Choice("image", value=MediaType.image),
-                questionary.Choice("video", value=MediaType.video),
-            ],
-            style=STYLE,
-        ).ask()
-        if media_choice is None:
-            return None
-        media_type = media_choice
 
     cap_str = questionary.text(
         "Max subjects to use? (leave blank for all)",
@@ -274,10 +258,7 @@ def _run_add(dataset_root: Path, subjects_file: Optional[Path] = None) -> Option
         return None
     subject_cap = int(cap_str) if cap_str.strip() else None
 
-    available = {
-        name: a for name, a in REGISTRY.items() if media_type in a.media_types
-    }
-    default_source = "duckduckgo" if media_type == MediaType.image else "wikimedia_commons_video"
+    default_source = "duckduckgo"
     chosen = questionary.checkbox(
         "Select one or more sources:",
         choices=[
@@ -286,7 +267,7 @@ def _run_add(dataset_root: Path, subjects_file: Optional[Path] = None) -> Option
                 value=name,
                 checked=(name == default_source),
             )
-            for name, a in available.items()
+            for name, a in REGISTRY.items()
         ],
         style=STYLE,
     ).ask()
@@ -395,7 +376,6 @@ def _run_add(dataset_root: Path, subjects_file: Optional[Path] = None) -> Option
         ds = Dataset(
             dataset_id=dataset_root.name,
             prompt=prompt,
-            media_type=media_type,
             subjects=new_subjects,
             sources=source_list,
         )
@@ -419,7 +399,7 @@ def _run_add(dataset_root: Path, subjects_file: Optional[Path] = None) -> Option
         async def _fetch_with_progress() -> dict:
             results: dict = {}
             for subject in new_subjects:
-                partial = await fetch_all([subject], source_list, limit, media_type)
+                partial = await fetch_all([subject], source_list, limit)
                 results.update(partial)
                 progress.advance(task)
             return results
@@ -436,7 +416,7 @@ def _run_add(dataset_root: Path, subjects_file: Optional[Path] = None) -> Option
         save_dataset(ds, dataset_root)
         return ds
 
-    new_items = _records_to_items(raw_results, media_type)
+    new_items = _records_to_items(raw_results)
     added = ds.add_items(new_items)
     skipped = len(new_items) - added
     if skipped:
@@ -608,7 +588,6 @@ def info() -> None:
     table.add_column("Field", style="bold")
     table.add_column("Value")
     table.add_row("Prompt", ds.prompt)
-    table.add_row("Media type", ds.media_type.value)
     table.add_row("Sources", ", ".join(ds.sources))
     table.add_row("Subjects", str(len(ds.subjects)))
     table.add_row("Total images", str(stats["total"]))
@@ -623,6 +602,8 @@ def info() -> None:
 
 
 cli.add_command(train_cmd)
+cli.add_command(dedup_cmd)
+cli.add_command(outliers_cmd)
 
 
 if __name__ == "__main__":

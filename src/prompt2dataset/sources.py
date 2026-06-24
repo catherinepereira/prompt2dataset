@@ -17,7 +17,6 @@ from typing import Any, Callable, Coroutine
 
 import httpx
 
-from prompt2dataset.models import MediaType
 
 log = logging.getLogger(__name__)
 
@@ -45,7 +44,6 @@ class SourceAdapter:
     name: str
     description: str
     fetch: FetchFn
-    media_types: tuple[MediaType, ...] = (MediaType.image,)
 
 
 async def _fetch_inaturalist(subject: str, limit: int = 20) -> list[dict[str, Any]]:
@@ -186,30 +184,6 @@ async def _fetch_wikimedia_commons(subject: str, limit: int = 20) -> list[dict[s
     return results
 
 
-async def _fetch_wikimedia_commons_video(subject: str, limit: int = 20) -> list[dict[str, Any]]:
-    results = []
-    for page in await _query_wikimedia_commons(subject, limit):
-        info = (page.get("imageinfo") or [{}])[0]
-        if not (info.get("mime") or "").startswith("video/"):
-            continue
-        # A video thumburl is a still frame, so use the full file URL instead
-        url = info.get("url", "")
-        if not url:
-            continue
-        url = url.split("?")[0]
-        results.append({
-            "source": "wikimedia_commons_video",
-            "url": url,
-            "title": page.get("title", "").removeprefix("File:"),
-            "description_url": info.get("descriptionurl", ""),
-            "mime": info.get("mime", ""),
-        })
-        if len(results) >= limit:
-            break
-
-    return results
-
-
 async def _fetch_duckduckgo(subject: str, limit: int = 20) -> list[dict[str, Any]]:
     # DDG requires a POST first to get a vqd token, then a GET for results
     headers = {
@@ -335,14 +309,6 @@ REGISTRY: dict[str, SourceAdapter] = {
         ),
         fetch=_fetch_wikimedia_commons,
     ),
-    "wikimedia_commons_video": SourceAdapter(
-        name="wikimedia_commons_video",
-        description=(
-            "Freely licensed video clips from Wikimedia Commons."
-        ),
-        fetch=_fetch_wikimedia_commons_video,
-        media_types=(MediaType.video,),
-    ),
 }
 
 
@@ -350,7 +316,6 @@ async def fetch_all(
     subjects: list[str],
     source_names: list[str],
     limit_per_subject: int = 20,
-    media_type: MediaType = MediaType.image,
 ) -> dict[str, dict[str, list[dict[str, Any]]]]:
     """Fetch from each source for every subject concurrently."""
     tasks: dict[tuple[str, str], asyncio.Task] = {}
@@ -360,12 +325,6 @@ async def fetch_all(
                 adapter = REGISTRY.get(source_name)
                 if adapter is None:
                     log.warning("Unknown source %r - skipping", source_name)
-                    continue
-                if media_type not in adapter.media_types:
-                    log.warning(
-                        "Source %r does not support %s - skipping",
-                        source_name, media_type.value,
-                    )
                     continue
                 tasks[(subject, source_name)] = tg.create_task(
                     adapter.fetch(subject, limit_per_subject)

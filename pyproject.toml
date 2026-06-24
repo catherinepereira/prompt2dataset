@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "prompt2dataset"
-version = "0.1.1"
+version = "0.1.2"
 description = "Build labeled image datasets from a plain-English prompt."
 readme = "README.md"
 license = { text = "MIT" }
@@ -32,24 +32,18 @@ dependencies = [
     "rich>=13.0.0",
     "python-dotenv>=1.0.0",
     "questionary>=2.0.0",
+    "Pillow>=10.0.0",
+    "numpy>=1.24.0",
 ]
 
 [project.optional-dependencies]
+# Installs CPU torch from PyPI. For a CUDA build, install with
+# --index-url https://download.pytorch.org/whl/cu126 (see README)
 train = [
-    "Pillow>=10.0.0",
-    "numpy>=1.24.0",
     "scikit-learn>=1.3.0",
     "torch-lr-finder>=0.2.1",
     "torch>=2.0.0",
     "torchvision>=0.15.0",
-]
-train-cuda = [
-    "Pillow>=10.0.0",
-    "numpy>=1.24.0",
-    "scikit-learn>=1.3.0",
-    "torch-lr-finder>=0.2.1",
-    "torch>=2.11.0",
-    "torchvision>=0.26.0",
 ]
 
 [project.urls]

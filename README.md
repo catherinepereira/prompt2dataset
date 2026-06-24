@@ -3,7 +3,7 @@
 <img width="600" alt="prompt2dataset-cli" src="https://github.com/user-attachments/assets/4b715060-04c7-4335-b6b9-594743603cb2" />
 
 
-Build labeled image and video datasets from a plain-English prompt.
+Build labeled image datasets from a plain-English prompt.
 
 ```text
 $ cd my-dataset
@@ -12,7 +12,7 @@ What dataset do you want to build? > bird species native to the Pacific Northwes
 ```
 
 prompt2dataset resolves your description into subjects via a local Qwen model,
-fetches media from one or more sources, deduplicates, downloads, and writes a manifest.
+fetches images from one or more sources, deduplicates, downloads, and writes a manifest.
 
 ## Installation
 
@@ -20,13 +20,22 @@ fetches media from one or more sources, deduplicates, downloads, and writes a ma
 pip install prompt2dataset
 ```
 
-`p2d add`, `review`, and `info` work with this base install. Training
-requires PyTorch. Install the CPU or CUDA extras depending on your hardware:
+`p2d add`, `review`, `info`, and `dedup` work with this base install. Training
+and `p2d outliers` require PyTorch:
 
 ```bash
-pip install "prompt2dataset[train]"       # CPU
-pip install "prompt2dataset[train-cuda]"  # CUDA (installs matching torch/torchvision)
+pip install "prompt2dataset[train]"
 ```
+
+This pulls a CPU build of torch. For a CUDA build, install from the matching
+PyTorch index:
+
+```bash
+pip install "prompt2dataset[train]" --index-url https://download.pytorch.org/whl/cu126
+```
+
+Pick the index for your CUDA version (`cu121`, `cu124`, `cu126`, ...). See the
+[PyTorch install guide](https://pytorch.org/get-started/locally/) for current options.
 
 ## Setup
 
@@ -52,10 +61,9 @@ All commands operate on the current directory.
 
 ### `p2d add`
 
-Prompts for a dataset description, asks whether you want images or video,
-resolves subjects, and downloads media. Run it again in the same directory to
-fetch additional subjects without re-downloading what's already there. The
-media type is fixed when the dataset is created.
+Prompts for a dataset description, resolves subjects, and downloads images. Run
+it again in the same directory to fetch additional subjects without
+re-downloading what's already there.
 
 ```bash
 $ mkdir pacific-northwest-birds && cd pacific-northwest-birds
@@ -73,13 +81,39 @@ $ p2d review --misclassified   # only images that a trained model got wrong
 
 Keys: **A** accept, **D** delete, **S** skip, **Q** quit.
 
+### `p2d dedup`
+
+Removes exact-duplicate images, found by hashing decoded pixels, so the same
+image saved under a different filename or format is caught.
+
+```bash
+$ p2d dedup
+$ p2d dedup --delete   # remove flagged files instead of marking invalid
+```
+
+### `p2d outliers`
+
+Removes images that don't fit the rest of their subject. Each image is embedded
+with a pretrained CNN, then DBSCAN flags those that don't cluster with the
+others (scraping junk like charts or text-on-white). Needs the `[train]` extra.
+
+```bash
+$ p2d outliers
+$ p2d outliers --delete    # remove flagged files instead of marking invalid
+$ p2d outliers --eps 0.3   # looser clustering (flags fewer)
+```
+
+Both commands mark flagged images invalid in the manifest by default, so you can
+inspect them with `p2d review` before they're gone. Pass `--delete` to remove the
+files directly.
+
 ### `p2d info`
 
 Print dataset statistics and the subject list.
 
 ### `p2d train`
 
-Image datasets only. Fine-tune a pretrained image classifier on the dataset. Uses
+Fine-tune a pretrained image classifier on the dataset. Uses
 [torch-lr-finder](https://github.com/davidtvs/pytorch-lr-finder) to find a good
 learning rate automatically, then trains for N epochs and exports a TorchScript model.
 
@@ -99,10 +133,9 @@ Options: `--epochs`, `--val-split`, `--img-size`, `--model` (mobilenet_v2, resne
 | **Wikimedia Commons** | Well-documented subjects with Wikipedia articles         |
 | **iNaturalist**       | Animals, plants, fungi - research-grade, taxonomy-tagged |
 | **Openverse**         | General subjects, scenes, cultural content               |
-| **Wikimedia Commons (video)** | Freely licensed video clips (video datasets)     |
 
 None require an API key. Sources are selected interactively when you run
-`p2d add`, filtered to those that support the chosen media type.
+`p2d add`.
 
 ## Output layout
 
