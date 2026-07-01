@@ -76,7 +76,9 @@ def _transforms(img_size: int):
 
 def _make_dataset(samples, class_to_idx, transform, img_size):
     from torch.utils.data import Dataset as TorchDataset
-    from PIL import Image, UnidentifiedImageError
+    from PIL import Image
+
+    from prompt2dataset.images import DecodeError, open_rgb
 
     class _ImageDataset(TorchDataset):
         def __len__(self):
@@ -85,8 +87,8 @@ def _make_dataset(samples, class_to_idx, transform, img_size):
         def __getitem__(self, idx):
             path, label = samples[idx]
             try:
-                img = Image.open(path).convert("RGB")
-            except (UnidentifiedImageError, OSError):
+                img = open_rgb(path)
+            except DecodeError:
                 img = Image.new("RGB", (img_size, img_size))
             return transform(img), class_to_idx[label]
 
@@ -294,7 +296,8 @@ def infer(
 ) -> list[Prediction]:
     """Predict every image with the saved model, return predicted != label."""
     import torch
-    from PIL import Image, UnidentifiedImageError
+
+    from prompt2dataset.images import DecodeError, open_rgb
 
     reporter = Reporter(on_progress)
     md = meta_dir(dataset_root)
@@ -313,8 +316,8 @@ def infer(
             tensors, ids = [], []
             for item in chunk:
                 try:
-                    img = Image.open(dataset_root / item.local_path).convert("RGB")
-                except (UnidentifiedImageError, OSError):
+                    img = open_rgb(dataset_root / item.local_path)
+                except DecodeError:
                     continue
                 tensors.append(eval_tf(img))
                 ids.append(item.item_id)

@@ -14,8 +14,8 @@ import logging
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, UnidentifiedImageError
 
+from prompt2dataset.images import DecodeError, open_rgb
 from prompt2dataset.models import Dataset, DatasetItem, ReviewStatus
 
 log = logging.getLogger(__name__)
@@ -25,13 +25,14 @@ log = logging.getLogger(__name__)
 DEFAULT_OUTLIER_EPS = 0.25
 OUTLIER_MIN_SAMPLES = 3
 EMBED_IMG_SIZE = 224
+EMBED_BATCH = 32
 
 
 def _pixel_hash(path: Path) -> str | None:
     """SHA-256 of the decoded RGB pixels, or None if the file can't be read."""
     try:
-        img = Image.open(path).convert("RGB")
-    except (UnidentifiedImageError, OSError) as exc:
+        img = open_rgb(path)
+    except DecodeError as exc:
         log.warning("Could not read %s: %s", path, exc)
         return None
     return hashlib.sha256(img.tobytes()).hexdigest()
@@ -80,20 +81,26 @@ def _load_embedder():
 
 
 def _embed(paths: list[Path], net, tf) -> np.ndarray:
-    """L2-normalized feature vectors, one row per path. Unreadable images get a zero row."""
+    """L2-normalized feature vectors, one row per path. Unreadable images get a zero row.
+
+    Runs in fixed-size batches so a large label group can't stack every decoded image
+    into one forward pass.
+    """
     import torch
 
-    batch = []
-    for path in paths:
-        try:
-            batch.append(tf(Image.open(path).convert("RGB")))
-        except (UnidentifiedImageError, OSError) as exc:
-            log.warning("Could not embed %s: %s", path, exc)
-            batch.append(torch.zeros(3, EMBED_IMG_SIZE, EMBED_IMG_SIZE))
-
-    with torch.no_grad():
-        feats = net(torch.stack(batch))
-    return torch.nn.functional.normalize(feats, dim=1).numpy()
+    rows: list[np.ndarray] = []
+    for start in range(0, len(paths), EMBED_BATCH):
+        batch = []
+        for path in paths[start:start + EMBED_BATCH]:
+            try:
+                batch.append(tf(open_rgb(path)))
+            except DecodeError as exc:
+                log.warning("Could not embed %s: %s", path, exc)
+                batch.append(torch.zeros(3, EMBED_IMG_SIZE, EMBED_IMG_SIZE))
+        with torch.no_grad():
+            feats = net(torch.stack(batch))
+        rows.append(torch.nn.functional.normalize(feats, dim=1).numpy())
+    return np.concatenate(rows, axis=0)
 
 
 def find_outliers(

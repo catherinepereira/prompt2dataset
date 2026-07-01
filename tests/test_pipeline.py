@@ -20,7 +20,7 @@ async def _fake_fetch(subjects, sources, limit):
     }
 
 
-def _ok_download(url, dest):
+def _ok_download(url, dest, client=None):
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(b"x")
     return True
@@ -46,7 +46,7 @@ def test_generate_downloads_and_saves(tmp_path: Path):
 def test_generate_prunes_failed_downloads(tmp_path: Path):
     ds, root = _fresh(tmp_path)
     with mock.patch.object(pipeline, "fetch_all", _fake_fetch), mock.patch.object(
-        pipeline, "download_file", lambda u, d: False
+        pipeline, "download_file", lambda u, d, client=None: False
     ):
         result = pipeline.generate(ds, root, ["Otter"], ["duckduckgo"], 3)
     assert result.failed == 1 and result.dropped == 1

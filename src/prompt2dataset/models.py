@@ -47,14 +47,15 @@ class Dataset(BaseModel):
     def touch(self) -> None:
         self.updated_at = time.time()
 
-    def add_items(self, new_items: list[DatasetItem]) -> int:
+    def add_items(self, new_items: list[DatasetItem]) -> list[str]:
+        """Append items not already present by id, returning the ids actually added."""
         existing = {item.item_id for item in self.items}
-        added = 0
+        added: list[str] = []
         for item in new_items:
             if item.item_id not in existing:
                 self.items.append(item)
                 existing.add(item.item_id)
-                added += 1
+                added.append(item.item_id)
         self.touch()
         return added
 

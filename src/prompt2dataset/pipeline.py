@@ -11,7 +11,9 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from prompt2dataset.download import download_file, extension_for
+import httpx
+
+from prompt2dataset.download import DOWNLOAD_TIMEOUT, download_file, extension_for
 from prompt2dataset.ids import slugify
 from prompt2dataset.models import Dataset, DatasetItem
 from prompt2dataset.progress import OnProgress, Reporter
@@ -83,28 +85,30 @@ def generate(
     if not new_subjects:
         return GenerateResult(0, 0, 0, 0, 0)
 
-    reporter.start(len(new_subjects), "Searching sources")
-    raw_results: dict = {}
-    for subject in new_subjects:
-        raw_results.update(asyncio.run(fetch_all([subject], sources, limit)))
-        reporter.advance(f"Searched {subject}")
+    # fetch every subject in one event loop, so fetch_all fans them out concurrently
+    reporter.start(1, "Searching sources")
+    raw_results = asyncio.run(fetch_all(new_subjects, sources, limit))
+    reporter.advance(f"Searched {len(new_subjects)} subjects")
 
     records = sum(
         len(recs) for src_map in raw_results.values() for recs in src_map.values()
     )
     new_items = records_to_items(raw_results)
-    added = ds.add_items(new_items)
+    added_ids = set(ds.add_items(new_items))
+    added = len(added_ids)
 
-    pending = [i for i in ds.items if not (dataset_root / i.local_path).exists()]
+    # only the newly added items need downloading, existing ones are already on disk
+    pending = [i for i in ds.items if i.item_id in added_ids]
     reporter.start(max(len(pending), 1), "Downloading images")
     saved = failed = 0
-    for item in pending:
-        if download_file(item.source_url, dataset_root / item.local_path):
-            saved += 1
-        else:
-            failed += 1
-        reporter.advance(f"Saved {saved}/{len(pending)}")
-        time.sleep(DOWNLOAD_RATE_LIMIT)
+    with httpx.Client(timeout=DOWNLOAD_TIMEOUT) as client:
+        for item in pending:
+            if download_file(item.source_url, dataset_root / item.local_path, client=client):
+                saved += 1
+            else:
+                failed += 1
+            reporter.advance(f"Saved {saved}/{len(pending)}")
+            time.sleep(DOWNLOAD_RATE_LIMIT)
 
     dropped = prune_missing(ds, dataset_root, keep=keep_on_prune)
     save_dataset(ds, dataset_root)

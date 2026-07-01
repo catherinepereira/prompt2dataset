@@ -34,6 +34,21 @@ def test_find_exact_duplicates(tmp_path: Path):
     assert [d.item_id for d in dupes] == ["b"]
 
 
+def test_oversized_image_is_skipped_not_crashed(tmp_path: Path, monkeypatch):
+    # a decode past the pixel cap raises DecompressionBombError, which the clean pass
+    # must treat as an unreadable file, not let it propagate and kill the run
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 16)  # 8x8 = 64 px exceeds this
+    root = tmp_path / "ds"
+    big = _item("robin", "big")
+    ok = _item("robin", "ok")
+    _write(root, big, (10, 20, 30))
+    _write(root, ok, (200, 0, 0))
+
+    # does not raise, and the oversized image is simply not hashed/flagged
+    dupes = find_exact_duplicates([big, ok], root)
+    assert dupes == []
+
+
 def test_apply_flags_marks_invalid(tmp_path: Path):
     root = tmp_path / "ds"
     a = _item("robin", "a")

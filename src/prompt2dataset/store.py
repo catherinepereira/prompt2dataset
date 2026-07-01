@@ -6,11 +6,16 @@ for external tools. Neither touches the terminal, so any consumer can persist a 
 
 from __future__ import annotations
 
+import csv
+import io
 from pathlib import Path
 from typing import Callable, Optional
 
 from prompt2dataset.models import Dataset, DatasetItem
 from prompt2dataset.paths import manifest_path, meta_dir
+
+# leading chars a spreadsheet reads as a formula, prefixed with ' to keep them as text
+_FORMULA_PREFIXES = ("=", "+", "-", "@")
 
 
 def load_dataset(dataset_root: Path) -> Dataset:
@@ -27,13 +32,20 @@ def save_dataset(ds: Dataset, dataset_root: Path) -> None:
     _write_labels(ds, md)
 
 
+def _defang(value: str) -> str:
+    """Keep a subject or label that starts with a formula char from running in a spreadsheet."""
+    return "'" + value if value.startswith(_FORMULA_PREFIXES) else value
+
+
 def _write_labels(ds: Dataset, md: Path) -> None:
-    lines = ["filename,label,subject,source"]
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\n")
+    writer.writerow(["filename", "label", "subject", "source"])
     for item in ds.items:
         source = item.meta.get("source", "unknown")
         subject = item.subject or item.label
-        lines.append(f"{item.local_path},{item.label},{subject},{source}")
-    (md / "labels.csv").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        writer.writerow([item.local_path, _defang(item.label), _defang(subject), _defang(source)])
+    (md / "labels.csv").write_text(buf.getvalue(), encoding="utf-8")
 
 
 def prune_missing(

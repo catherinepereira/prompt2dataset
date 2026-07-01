@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024
 _DOWNLOAD_CHUNK = 1024 * 1024
 _MAX_REDIRECTS = 10
-_TIMEOUT = 20
+DOWNLOAD_TIMEOUT = 20
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 
@@ -56,41 +56,50 @@ def host_is_public(host: str) -> bool:
     return True
 
 
-def download_file(url: str, dest: Path) -> bool:
-    """Fetch url to dest. Returns True on success, False on any refusal or error."""
+def download_file(url: str, dest: Path, client: httpx.Client | None = None) -> bool:
+    """Fetch url to dest. Returns True on success, False on any refusal or error.
+
+    Pass a shared client to reuse connections across a batch of downloads. Without one,
+    a short-lived client is created for this call.
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
     ua = _user_agent()
     part = dest.with_name(dest.name + ".part")
+    owned = client is None
+    if owned:
+        client = httpx.Client(timeout=DOWNLOAD_TIMEOUT)
     try:
         # httpx speaks only http(s), so file:// and ftp:// are already refused
-        with httpx.Client(timeout=_TIMEOUT) as client:
-            for _ in range(_MAX_REDIRECTS + 1):
-                if not host_is_public(httpx.URL(url).host):
-                    log.warning("Refusing non-public host for %s", url)
+        for _ in range(_MAX_REDIRECTS + 1):
+            if not host_is_public(httpx.URL(url).host):
+                log.warning("Refusing non-public host for %s", url)
+                return False
+            with client.stream("GET", url, headers={"User-Agent": ua}) as resp:
+                if resp.is_redirect:
+                    url = str(resp.next_request.url)
+                    continue
+                resp.raise_for_status()
+                length = resp.headers.get("Content-Length")
+                if length and int(length) > MAX_DOWNLOAD_BYTES:
+                    log.warning("Skipping %s: %s bytes exceeds cap", url, length)
                     return False
-                with client.stream("GET", url, headers={"User-Agent": ua}) as resp:
-                    if resp.is_redirect:
-                        url = str(resp.next_request.url)
-                        continue
-                    resp.raise_for_status()
-                    length = resp.headers.get("Content-Length")
-                    if length and int(length) > MAX_DOWNLOAD_BYTES:
-                        log.warning("Skipping %s: %s bytes exceeds cap", url, length)
-                        return False
-                    written = 0
-                    with open(part, "wb") as f:
-                        for chunk in resp.iter_bytes(_DOWNLOAD_CHUNK):
-                            written += len(chunk)
-                            if written > MAX_DOWNLOAD_BYTES:
-                                log.warning("Aborting %s: exceeded %d byte cap", url, MAX_DOWNLOAD_BYTES)
-                                part.unlink(missing_ok=True)
-                                return False
-                            f.write(chunk)
-                    os.replace(part, dest)
-                    return True
-            log.warning("Too many redirects for %s", url)
-            return False
+                written = 0
+                with open(part, "wb") as f:
+                    for chunk in resp.iter_bytes(_DOWNLOAD_CHUNK):
+                        written += len(chunk)
+                        if written > MAX_DOWNLOAD_BYTES:
+                            log.warning("Aborting %s: exceeded %d byte cap", url, MAX_DOWNLOAD_BYTES)
+                            part.unlink(missing_ok=True)
+                            return False
+                        f.write(chunk)
+                os.replace(part, dest)
+                return True
+        log.warning("Too many redirects for %s", url)
+        return False
     except Exception as exc:
         log.warning("Download failed %s: %s", url, exc)
         part.unlink(missing_ok=True)
         return False
+    finally:
+        if owned:
+            client.close()
