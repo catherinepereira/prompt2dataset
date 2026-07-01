@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "prompt2dataset"
-version = "0.2.0"
+version = "2.0.0"
 description = "Build labeled image datasets from a plain-English prompt."
 readme = "README.md"
 license = { text = "MIT" }
@@ -51,8 +51,8 @@ Homepage = "https://github.com/catherinepereira/prompt2dataset"
 "Bug Tracker" = "https://github.com/catherinepereira/prompt2dataset/issues"
 
 [project.scripts]
-p2d = "prompt2dataset.ingest:cli"
-prompt2dataset = "prompt2dataset.ingest:cli"
+p2d = "prompt2dataset.cli:main"
+prompt2dataset = "prompt2dataset.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/prompt2dataset"]

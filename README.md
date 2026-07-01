@@ -3,16 +3,31 @@
 <img width="600" alt="prompt2dataset-cli" src="https://github.com/user-attachments/assets/4b715060-04c7-4335-b6b9-594743603cb2" />
 
 
-Build labeled image datasets from a plain-English prompt.
+Build labeled image datasets from a plain-English prompt. Resolves a description into
+subjects via a local Qwen model, fetches images from one or more sources, deduplicates,
+downloads, and writes a manifest.
 
-```text
-$ cd my-dataset
-$ p2d add
-What dataset do you want to build? > bird species native to the Pacific Northwest
+## Library
+
+```python
+from pathlib import Path
+
+from prompt2dataset import (
+    Dataset, load_dataset, save_dataset,
+    resolve_subjects, generate,
+    find_exact_duplicates, find_outliers, apply_flags,
+    train, infer, crossval,
+)
+
+root = Path("my-dataset")
+ds = Dataset(dataset_id="birds", prompt="pacific northwest birds", subjects=[], sources=[])
+subjects = resolve_subjects("bird species native to the Pacific Northwest", count=8)
+generate(ds, root, subjects, ["duckduckgo"], limit=20)   # fetch + download + prune
 ```
 
-prompt2dataset resolves your description into subjects via a local Qwen model,
-fetches images from one or more sources, deduplicates, downloads, and writes a manifest.
+Every function takes plain arguments and reports progress through an optional
+`on_progress` callback, so the library imports no UI. Add your own image source with
+`register_source(SourceAdapter(name, description, fetch))`.
 
 ## Installation
 
@@ -55,7 +70,7 @@ P2D_MODEL=qwen2.5:3b-instruct        # which model to resolve subjects with
 P2D_CONTACT=you@example.com          # included in source API request headers per Wikimedia's policy
 ```
 
-## Usage
+## CLI
 
 All commands operate on the current directory.
 

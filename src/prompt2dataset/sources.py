@@ -1,22 +1,21 @@
-"""
-Image source adapters
+"""Image source adapters, and a registry you can extend.
 
-To add a new source:
-1. Write an async fetch function: (subject, limit) -> list[dict]
-2. Add a SourceAdapter entry to REGISTRY at the bottom of this file
+A source is a SourceAdapter: a name, a description, and an async fetch(subject, limit)
+returning result dicts (each with at least a "url"). Register your own with
+register_source() to add a source without editing this module.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
 from dataclasses import dataclass
 from typing import Any, Callable, Coroutine
 
 import httpx
 
+from prompt2dataset.download import _user_agent
 
 log = logging.getLogger(__name__)
 
@@ -30,11 +29,6 @@ WIKIMEDIA_MAX_RESULTS = 50
 
 # Bing has no JSON API. Its async endpoint returns a fixed-size page of results.
 BING_PAGE_SIZE = 35
-
-
-def _user_agent() -> str:
-    contact = os.environ.get("P2D_CONTACT", "unknown")
-    return f"prompt2dataset/0.1 ({contact}) httpx/0.27"
 
 FetchFn = Callable[[str, int], Coroutine[Any, Any, list[dict[str, Any]]]]
 
@@ -310,6 +304,15 @@ REGISTRY: dict[str, SourceAdapter] = {
         fetch=_fetch_wikimedia_commons,
     ),
 }
+
+
+def register_source(adapter: SourceAdapter) -> None:
+    """Add or replace a source in the registry, keyed by its name."""
+    REGISTRY[adapter.name] = adapter
+
+
+def source_names() -> list[str]:
+    return list(REGISTRY.keys())
 
 
 async def fetch_all(
