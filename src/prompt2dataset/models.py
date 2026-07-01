@@ -23,6 +23,9 @@ class DatasetItem(BaseModel):
     label: str
     source_url: str
     local_path: str
+    # the original human-readable subject the label was slugified from, for display.
+    # defaults empty so manifests written before this field loads still validate
+    subject: str = ""
     review_status: ReviewStatus = ReviewStatus.pending
     meta: dict[str, Any] = Field(default_factory=dict)
     fetched_at: float = Field(default_factory=time.time)

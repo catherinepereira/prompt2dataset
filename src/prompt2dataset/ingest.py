@@ -27,6 +27,7 @@ from rich.table import Table
 load_dotenv()
 
 from prompt2dataset.train import train_cmd
+from prompt2dataset.crossval import crossval_cmd
 from prompt2dataset.dedup import dedup_cmd, outliers_cmd
 from prompt2dataset.models import Dataset, DatasetItem, ReviewStatus
 from prompt2dataset.resolver import resolve_subjects
@@ -65,10 +66,11 @@ def save_dataset(ds: Dataset, dataset_root: Path) -> None:
 
 
 def _write_labels(ds: Dataset, md: Path) -> None:
-    lines = ["filename,subject,source"]
+    lines = ["filename,label,subject,source"]
     for item in ds.items:
         source = item.meta.get("source", "unknown")
-        lines.append(f"{item.local_path},{item.label},{source}")
+        subject = item.subject or item.label
+        lines.append(f"{item.local_path},{item.label},{subject},{source}")
     (md / "labels.csv").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -185,6 +187,7 @@ def _records_to_items(raw_results: dict) -> list[DatasetItem]:
                 items.append(DatasetItem(
                     item_id=item_id,
                     label=label,
+                    subject=subject,
                     source_url=url,
                     local_path=str(Path(label) / f"{label}_{item_id}{ext}"),
                     meta={k: v for k, v in rec.items() if k != "url"},
@@ -523,6 +526,7 @@ def review(misclassified: bool) -> None:
         table.add_column("key", style="dim", no_wrap=True)
         table.add_column("value")
         table.add_row("item", item.item_id)
+        table.add_row("subject", item.subject or item.label)
         table.add_row("label", item.label)
         table.add_row("url", item.source_url)
         img_path = dataset_root / item.local_path
@@ -602,6 +606,7 @@ def info() -> None:
 
 
 cli.add_command(train_cmd)
+cli.add_command(crossval_cmd)
 cli.add_command(dedup_cmd)
 cli.add_command(outliers_cmd)
 

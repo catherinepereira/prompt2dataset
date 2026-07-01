@@ -124,6 +124,27 @@ $ p2d train --model resnet50 --epochs 10
 
 Options: `--epochs`, `--val-split`, `--img-size`, `--model` (mobilenet_v2, resnet18, resnet50).
 
+### `p2d crossval`
+
+Find likely mislabeled images across the whole dataset by out-of-fold
+cross-validation. `p2d train` only checks its held-out validation split, so training
+images never get a label check. Crossval splits the data into k folds and predicts each
+fold with a model trained on the others, so every image gets a prediction from a model
+that never saw it. Disagreements are written to `misclassified.json`. Needs the
+`[train]` extra.
+
+```bash
+$ p2d crossval
+$ p2d crossval --folds 10 --epochs 8
+$ p2d review --misclassified   # step through what it flagged
+```
+
+Options: `--folds`, `--epochs` (per fold), `--img-size`, `--seed` (reproducible folds).
+
+A class small relative to `--folds` can land entirely in one fold, leaving that fold's
+training split with no examples of it. Those images can't be predicted and are skipped
+with a count, not flagged. Add more images per class or lower `--folds` to check them.
+
 ## Data sources
 
 | Source                | Best for                                                 |
@@ -148,12 +169,12 @@ my-dataset/
     ...
   .p2d/
     manifest.json       dataset metadata and item list
-    labels.csv          filename, subject, source
+    labels.csv          filename, label, subject, source
     subjects.json       resolved subject list (cached)
     model.pt            TorchScript model (after p2d train)
     labels.json         class names in output order
     report.json         per-class precision/recall/F1
-    misclassified.json  validation images the model got wrong
+    misclassified.json  images the model got wrong (p2d train or crossval)
 ```
 
 `manifest.json` is the authoritative record. Everything in `.p2d/` is
