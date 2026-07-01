@@ -65,6 +65,28 @@ def save_dataset(ds: Dataset, dataset_root: Path) -> None:
     _write_labels(ds, md)
 
 
+def prune_missing(ds: Dataset, dataset_root: Path, keep=None) -> int:
+    """Drop items whose image is not on disk, returning how many were removed.
+
+    A source hands back more URLs than download cleanly (dead links, hotlink 403s), and
+    the manifest records an item per URL before the download runs. Without this, failed
+    downloads linger as items pointing at files that were never written.
+
+    keep is an optional predicate for items to retain even when their file is absent,
+    for a caller that stores some files outside local_path (e.g. a recycle bin).
+    """
+    before = len(ds.items)
+    ds.items = [
+        i
+        for i in ds.items
+        if (keep is not None and keep(i)) or (dataset_root / i.local_path).exists()
+    ]
+    removed = before - len(ds.items)
+    if removed:
+        ds.touch()
+    return removed
+
+
 def _write_labels(ds: Dataset, md: Path) -> None:
     lines = ["filename,label,subject,source"]
     for item in ds.items:
@@ -432,6 +454,10 @@ def _run_add(dataset_root: Path, subjects_file: Optional[Path] = None) -> Option
         if failed:
             line += f", [red]{failed} failed[/]"
         console.print(line)
+
+    dropped = prune_missing(ds, dataset_root)
+    if dropped:
+        console.print(f"[dim]  {dropped} undownloadable items pruned[/]")
 
     save_dataset(ds, dataset_root)
     return ds
